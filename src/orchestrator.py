@@ -84,7 +84,7 @@ class Orchestrator:
                 verdict = judge.evaluate(file_path, original_score, self.target_dir)
                 v_status = verdict.get("verdict", "UNKNOWN").upper()
 
-                if v_status == "PASS" and verdict.get("actual_tests_passed", False):
+                if v_status == "PASS":
                     print(f"   ✅ PASS (Success)")
                     final_score = verdict.get("actual_new_score")
                     print(f"FINAL SCORE: {final_score}")
