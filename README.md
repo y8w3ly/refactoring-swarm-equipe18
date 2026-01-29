@@ -1,4 +1,4 @@
-# The Refactoring Swarm 🚀
+# The Refactoring Swarm (Equipe 18) 🚀
 
 A multi-agent autonomous system built with Google Gemini to automatically audit, fix, and validate Python code.
 
