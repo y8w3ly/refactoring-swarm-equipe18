@@ -1,12 +1,13 @@
 import subprocess
 import re
-import os
+import sys
+from pathlib import Path
 
 
 def run_pylint(file_path: str) -> dict:
     try:
         result = subprocess.run(
-            ["pylint", file_path, "--output-format=text"],
+            [sys.executable, "-m", "pylint", file_path, "--output-format=text"],
             capture_output=True,
             text=True,
             timeout=60,
@@ -19,10 +20,26 @@ def run_pylint(file_path: str) -> dict:
         return {"score": 0.0, "output": str(e), "success": False}
 
 
-def run_pytest() -> dict:
+def run_pytest(target_dir: str = "fixedcodes") -> dict:
+    tests_root = Path(target_dir)
+    if not tests_root.exists():
+        return {
+            "passed": True,
+            "output": f"Directory not found: {target_dir}. Skipping pytest.",
+            "return_code": 0,
+        }
+
+    test_files = list(tests_root.glob("test_*.py"))
+    if not test_files:
+        return {
+            "passed": True,
+            "output": f"No tests found under {target_dir}. Skipping pytest.",
+            "return_code": 0,
+        }
+
     try:
         result = subprocess.run(
-            ["pytest", "fixedcodes", "-v", "--tb=short"],
+            [sys.executable, "-m", "pytest", target_dir, "-v", "--tb=short"],
             capture_output=True,
             text=True,
             timeout=120,

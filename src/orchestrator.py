@@ -1,6 +1,5 @@
 import os
-import sys  # Added sys to fix import errors
-import time  # Added for safety delays
+import sys
 from src.agents.auditor import AuditorAgent
 from src.agents.fixer import FixerAgent
 from src.agents.judge import JudgeAgent
@@ -13,10 +12,9 @@ class Orchestrator:
         self.target_dir = os.path.abspath(target_dir)
         self.api_key = api_key
         set_sandbox(self.target_dir)
-        self.max_iterations = 5  # Reduced from 10 to save tokens during debugging
+        self.max_iterations = 5
 
     def run(self) -> dict:
-        # CRITICAL FIX: Add the target dir to sys.path so the agents can "see" the modules
         if self.target_dir not in sys.path:
             sys.path.append(self.target_dir)
 
@@ -50,6 +48,7 @@ class Orchestrator:
             original_score = analysis.get("original_pylint_score", 0)
             iteration = 0
             error_logs = None
+            write_failures = 0
 
             # Ensure we are working with the absolute path
             full_path = (
@@ -58,30 +57,41 @@ class Orchestrator:
                 else file_path
             )
 
-            print(f"\nnb📁 Processing: {file_path} (Score: {original_score})")
+            print(f"\n📁 Processing: {file_path} (Score: {original_score})")
 
             while iteration < self.max_iterations:
                 iteration += 1
                 print(f"   🔄 Iteration {iteration}/{self.max_iterations}")
 
-                # FIX: Pass the 'iteration' number so the Fixer knows how desperate to be
                 analysis["current_iteration"] = iteration
                 fix_result = fixer.fix(analysis, error_logs)
 
-                # FAIL-SAFE: If Fixer writes nothing, don't loop infinitely.
                 if not fix_result.get("file_written", False):
                     print(f"   ⚠️ Fix not written: {fix_result.get('error')}")
-                    error_logs = f"Previous attempt failed to write file: {fix_result.get('error')}"
-
-                    # If we fail to write twice in a row, likely a permissions or API structure issue.
-                    if iteration > 1 and "Previous attempt failed" in str(error_logs):
+                    write_failures += 1
+                    error_logs = (
+                        f"Previous attempt failed to write file: {fix_result.get('error')}"
+                    )
+                    if write_failures >= 2:
                         print("   ❌ Aborting file due to repeated write failures.")
+                        completed_files.append(
+                            {
+                                "file": file_path,
+                                "status": "RETRY",
+                                "iterations": iteration,
+                                "final_verdict": {
+                                    "verdict": "RETRY",
+                                    "feedback": "Repeated write failures from Fixer.",
+                                },
+                            }
+                        )
                         break
                     continue
+                write_failures = 0
 
                 # EVALUATION PHASE
                 print("   ⚖️  Judging new code...")
-                verdict = judge.evaluate(file_path, original_score, self.target_dir)
+                verdict = judge.evaluate(full_path, original_score, self.target_dir)
                 v_status = verdict.get("verdict", "UNKNOWN").upper()
 
                 if v_status == "PASS":
@@ -89,19 +99,26 @@ class Orchestrator:
                     final_score = verdict.get("actual_new_score")
                     print(f"FINAL SCORE: {final_score}")
                     completed_files.append(
-                        {"file": file_path, "status": "PASS", "iterations": iteration}
+                        {
+                            "file": file_path,
+                            "status": "PASS",
+                            "iterations": iteration,
+                            "final_verdict": verdict,
+                        }
                     )
                     break
 
                 elif v_status == "RETRY":
                     feedback = verdict.get("feedback", "No feedback")
-                    print(f"   🔄 RETRY NEEDED: {feedback[:]}")
-                    error_logs = f"Judge Feedback: {feedback}\nTest Output: {verdict.get('pytest_output', '')[:]}"
+                    print(f"   🔄 RETRY NEEDED: {feedback}")
+                    error_logs = (
+                        f"Judge Feedback: {feedback}\n"
+                        f"Test Output: {verdict.get('pytest_output', '')[:3000]}"
+                    )
                     # Update analysis so Fixer sees the history
                     analysis["previous_fix"] = fix_result
 
                 else:
-                    # FIX: Handle unknown/failure states safely
                     print(f"   ❓ Unknown Verdict '{v_status}'. Retrying...")
                     error_logs = f"Judge returned unclear verdict: {v_status}. Please fix code validity."
 
@@ -110,8 +127,12 @@ class Orchestrator:
                 completed_files.append(
                     {
                         "file": file_path,
-                        "status": "MAX_ITERATIONS",
+                        "status": "RETRY",
                         "iterations": iteration,
+                        "final_verdict": {
+                            "verdict": "RETRY",
+                            "feedback": "Max iterations reached.",
+                        },
                     }
                 )
 

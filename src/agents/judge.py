@@ -1,7 +1,7 @@
 import json
 import os
 import subprocess
-import ast
+import sys
 from src.prompts.judge_prompt import JUDGE_SYSTEM_PROMPT
 from src.tools.file_tools import read_file
 from src.tools.analysis_tools import run_pylint, run_pytest
@@ -20,7 +20,7 @@ class JudgeAgent:
 
             # 1. RUN TOOLS (Style & Tests)
             pylint_result = run_pylint(file_path)
-            pytest_result = run_pytest()
+            pytest_result = run_pytest(target_dir)
 
             # 2. NEW: RUN EXECUTION CHECK (Does it actually work?)
             # We try to run the file directly: python3 file.py
@@ -32,7 +32,7 @@ class JudgeAgent:
             try:
                 # 3-second timeout for infinite loops
                 exec_result = subprocess.run(
-                    ["python3", full_path],
+                    [sys.executable, full_path],
                     capture_output=True,
                     text=True,
                     timeout=3,
@@ -47,14 +47,13 @@ class JudgeAgent:
                 exit_code = 1
                 exec_out = str(e)
 
-            # 3. FAIL-SAFE FOR SIMPLE SCRIPTS
-            # If code is short (< 10 lines) and runs perfectly (Exit 0), FORCE PASS.
-            # This fixes the "Hello World" problem where Pylint score is low but code works.
-
-            # MOCK MODE HANDLER
             if MOCK_MODE:
-                # ... (Keep your existing mock logic here if needed) ...
-                pass
+                verdict = self._build_local_verdict(
+                    original_score, pylint_result, pytest_result, exit_code
+                )
+                return self._finalize_verdict(
+                    verdict, file_path, pytest_result, pylint_result
+                )
 
             # 4. CONSTRUCT PROMPT WITH EXECUTION DATA
             user_prompt = f"""{JUDGE_SYSTEM_PROMPT}
@@ -65,16 +64,15 @@ class JudgeAgent:
 
             EXECUTION STATUS: {'✅ SUCCESS' if exit_code == 0 else '❌ FAILED'} (Exit Code: {exit_code})
             EXECUTION OUTPUT:
-            {exec_out[:]}
+            {exec_out[:3000]}
 
             ORIGINAL PYLINT SCORE: {original_score}/10
             NEW PYLINT SCORE: {pylint_result['score']}/10
-password123
             PYLINT OUTPUT:
-            {pylint_result['output'][:]}
+            {pylint_result['output'][:3000]}
 
             PYTEST RESULTS:
-            {pytest_result['output'][:]}
+            {pytest_result['output'][:3000]}
 
             FIXED CODE:
             ```python
@@ -106,13 +104,15 @@ password123
                     response_text.replace("```json", "").replace("```", "").strip()
                 )
                 verdict = json.loads(clean_response)
+                verdict_value = verdict.get("verdict", "").upper()
+                if verdict_value not in {"PASS", "RETRY"}:
+                    verdict = self._build_local_verdict(
+                        original_score, pylint_result, pytest_result, exit_code
+                    )
             except json.JSONDecodeError:
-                # Fallback logic if JSON fails
-                pass_condition = pytest_result["passed"] or exit_code == 0
-                verdict = {
-                    "verdict": "PASS" if pass_condition else "RETRY",
-                    "feedback": f"JSON Error. Execution Code: {exit_code}. Raw: {response_text[:50]}",
-                }
+                verdict = self._build_local_verdict(
+                    original_score, pylint_result, pytest_result, exit_code
+                )
 
             return self._finalize_verdict(
                 verdict, file_path, pytest_result, pylint_result
@@ -126,6 +126,41 @@ password123
                 "error": str(e),
                 "feedback": f"Judge crash: {e}",
             }
+
+    def _build_local_verdict(
+        self,
+        original_score: float,
+        pylint_result: dict,
+        pytest_result: dict,
+        exit_code: int,
+    ) -> dict:
+        pylint_score = float(pylint_result.get("score", 0.0))
+        tests_passed = bool(pytest_result.get("passed", False))
+        script_ran = exit_code == 0
+
+        if (
+            tests_passed
+            and script_ran
+            and pylint_score >= max(0.0, original_score - 0.5)
+        ):
+            return {
+                "verdict": "PASS",
+                "feedback": "Tests passed and execution is stable.",
+            }
+
+        feedback_items = []
+        if not tests_passed:
+            feedback_items.append("Fix failing tests reported by pytest.")
+        if not script_ran:
+            feedback_items.append("File execution failed; fix runtime exceptions.")
+        if pylint_score < original_score - 0.5:
+            feedback_items.append(
+                f"Pylint score regressed from {original_score} to {pylint_score}."
+            )
+        if not feedback_items:
+            feedback_items.append("Apply additional code-quality improvements.")
+
+        return {"verdict": "RETRY", "feedback": " ".join(feedback_items)}
 
     def _finalize_verdict(self, verdict, file_path, pytest_result, pylint_result):
         """Helper to attach metadata to the verdict before returning"""

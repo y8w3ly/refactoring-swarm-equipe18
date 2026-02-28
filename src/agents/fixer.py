@@ -1,8 +1,5 @@
 import json
-import time
-import ast
 import re
-import os
 from src.prompts.fixer_prompt import FIXER_SYSTEM_PROMPT
 from src.tools.file_tools import write_file
 from src.utils.logger import log_experiment, ActionType
@@ -165,7 +162,10 @@ ANALYSIS REPORT:
 
         # Bug 4: Bubble sort swap
         if "arr[j], arr[j+1] == arr[j+1], arr[j]" in fixed_code:
-            fixed_code = fixed_code.replace("==", "=")
+            fixed_code = fixed_code.replace(
+                "arr[j], arr[j+1] == arr[j+1], arr[j]",
+                "arr[j], arr[j+1] = arr[j+1], arr[j]",
+            )
             changes.append("Fixed assignment operator in bubble sort swap")
 
         # Bug 5: Class naming
@@ -213,12 +213,5 @@ ANALYSIS REPORT:
         if not lines[0].startswith('"""') and not lines[0].startswith("'''"):
             fixed_code = '"""Auto-generated module docstring."""\n' + fixed_code
             changes.append("Added module docstring")
-
-        # Add Type Hints LAST (to ensure they don't break regexes above)
-        if "def " in fixed_code and "->" not in fixed_code:
-            fixed_code = re.sub(
-                r"def (\w+)\(([^)]*)\):", r"def \1(\2) -> None:", fixed_code
-            )
-            changes.append("Added basic type hints")
 
         return fixed_code, changes

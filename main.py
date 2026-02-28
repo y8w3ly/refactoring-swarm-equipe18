@@ -54,9 +54,10 @@ def main():
             print(f"❌ Failed to copy files: {e}")
             sys.exit(1)
 
-    api_key = os.getenv("GOOGLE_API_KEY")
-    if not api_key:
-        print("❌ GOOGLE_API_KEY not found in .env file.")
+    mock_mode = os.getenv("MOCK_MODE", "false").lower() == "true"
+    api_key = os.getenv("GOOGLE_API_KEY", "")
+    if not mock_mode and not api_key:
+        print("❌ GOOGLE_API_KEY not found in .env file (required outside mock mode).")
         sys.exit(1)
 
     print(f"🚀 STARTING REFACTORING SWARM ON: {work_dir}")
@@ -86,7 +87,11 @@ def main():
 
         for file_info in result["completed_files"]:
             verdict = file_info.get("final_verdict", {})
-            status = "✅ PASS" if verdict.get("verdict") == "PASS" else "🔄 RETRY"
+            status_value = (
+                verdict.get("verdict")
+                or file_info.get("status", "RETRY")
+            ).upper()
+            status = "✅ PASS" if status_value == "PASS" else "🔄 RETRY"
             print(
                 f"   - {file_info['file']}: {status} (iterations: {file_info['iterations']})"
             )

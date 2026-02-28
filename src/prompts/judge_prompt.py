@@ -17,6 +17,7 @@ OUTPUT FORMAT:
 You must respond with a JSON object:
 
 {
+    "verdict": "PASS or RETRY",
     "feedback": "Detailed feedback for the Fixer if RETRY",
     "specific_issues": [
         "Issue 1 that needs fixing",
